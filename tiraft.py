@@ -1,16 +1,20 @@
 import library
 
-# Carregar Haar Cascade (detetor de rostos)
+# ----------------- Cascades de rosto -----------------
 
+# Frontal
+cascade_path_frontal = library.cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
+face_cascade_frontal = library.cv2.CascadeClassifier(cascade_path_frontal)
 
-cascade_path = library.cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
-face_cascade = library.cv2.CascadeClassifier(cascade_path)
+# Perfil (lado) – só deteta um dos lados, vamos usar flip para o outro
+cascade_path_profile = library.cv2.data.haarcascades + "haarcascade_profileface.xml"
+face_cascade_profile = library.cv2.CascadeClassifier(cascade_path_profile)
 
 BASE_DIR = library.os.path.dirname(__file__)
 DB_PATH = library.os.path.join(BASE_DIR, "dataset")
 
 # Pergunta o nome da pessoa
-pessoa = input("Nome da pessoa para guardar as fotos: ").replace(' ', '')
+pessoa = input("Nome da pessoa para guardar as fotos: ").replace(" ", "")
 
 # Caminho da pasta dessa pessoa
 pasta_pessoa = library.os.path.join(DB_PATH, pessoa)
@@ -28,11 +32,12 @@ if not cap.isOpened():
 cap.set(library.cv2.CAP_PROP_FRAME_WIDTH, 640)
 cap.set(library.cv2.CAP_PROP_FRAME_HEIGHT, 480)
 
-janela_nome = "Sorria"
+janela_nome = "Sorria e vá virando a cabeça 👀"
 library.cv2.namedWindow(janela_nome, library.cv2.WINDOW_NORMAL)
 
 print(">>> Vai começar a capturar automaticamente!")
-print(">>> Prepara a cara! A tirar fotos em 3 segundos...\n")
+print(">>> Olha para a câmara, depois vira ligeiro para a esquerda e para a direita.")
+print(">>> A tirar fotos em 3 segundos...\n")
 
 library.time.sleep(1); print("3...")
 library.time.sleep(1); print("2...")
@@ -52,26 +57,61 @@ while contador <= total_fotos:
     h_frame, w_frame = frame.shape[:2]
     gray = library.cv2.cvtColor(frame, library.cv2.COLOR_BGR2GRAY)
 
-    # 🔍 detecção melhorada
-    faces = face_cascade.detectMultiScale(
+    # -------------- DETEÇÃO DE VÁRIOS ÂNGULOS --------------
+
+    faces_todas = []
+
+    # 1) Faces frontais
+    faces_front = face_cascade_frontal.detectMultiScale(
         gray,
-        scaleFactor=1.1,     # mais preciso
-        minNeighbors=7,      # evita falsos positivos
-        minSize=(120, 120)   # ignora caras pequenas demais
+        scaleFactor=1.1,
+        minNeighbors=7,
+        minSize=(120, 120)
     )
+    for (x, y, w, h) in faces_front:
+        faces_todas.append((x, y, w, h))
+
+    # 2) Faces de perfil (um lado)
+    faces_profile = face_cascade_profile.detectMultiScale(
+        gray,
+        scaleFactor=1.1,
+        minNeighbors=5,
+        minSize=(120, 120)
+    )
+    for (x, y, w, h) in faces_profile:
+        faces_todas.append((x, y, w, h))
+
+    # 3) Faces de perfil no lado contrário (imagem invertida)
+    gray_flip = library.cv2.flip(gray, 1)
+    faces_profile_flip = face_cascade_profile.detectMultiScale(
+        gray_flip,
+        scaleFactor=1.1,
+        minNeighbors=5,
+        minSize=(120, 120)
+    )
+    for (x_f, y_f, w_f, h_f) in faces_profile_flip:
+        # converter coordenadas de volta para o frame normal
+        x = w_frame - x_f - w_f
+        y = y_f
+        w = w_f
+        h = h_f
+        faces_todas.append((x, y, w, h))
 
     rosto_valido = None
 
-    for (x, y, w, h) in faces:
-        aspect = w / float(h)
+    # -------------- FILTROS SIMPLES (para evitar lixo) --------------
 
-        # Filtros anti-queixo
-        if aspect < 0.7 or aspect > 1.5:
+    for (x, y, w, h) in faces_todas:
+        # Filtro de tamanho mínimo (evitar caras muito pequenas ao fundo)
+        if w < w_frame * 0.12 or h < h_frame * 0.12:
             continue
-        if y > h_frame * 0.55:  # rosto muito em baixo
+
+        # Filtro de posição demasiado em baixo (tipo peito)
+        if y > h_frame * 0.80:
             continue
-        if w < w_frame * 0.15 or h < h_frame * 0.15:
-            continue
+
+        # Aqui NÃO fazemos filtro de "aspect ratio",
+        # para não excluir caras de lado / inclinadas.
 
         rosto_valido = (x, y, w, h)
         break
@@ -82,12 +122,16 @@ while contador <= total_fotos:
         # Quadrado verde
         library.cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
 
-        # Tira a foto do FRAME INTEIRO
         agora = library.time.time()
         if agora - ultimo_tiro >= intervalo:
             nome_arquivo = f"{pessoa}_{contador}.jpg"
             caminho_final = library.os.path.join(pasta_pessoa, nome_arquivo)
-            library.cv2.imwrite(caminho_final, frame)
+
+            # 🔹 RECORTA SÓ A CARA E REDIMENSIONA (por ex. 224x224)
+            rosto = frame[y:y + h, x:x + w]
+            rosto = library.cv2.resize(rosto, (224, 224))
+
+            library.cv2.imwrite(caminho_final, rosto)
 
             print(f"[{contador}/{total_fotos}] Foto guardada: {caminho_final}")
             contador += 1
@@ -95,8 +139,15 @@ while contador <= total_fotos:
 
     # Texto
     texto = f"{pessoa} - foto {contador}/{total_fotos}"
-    library.cv2.putText(frame, texto, (10, 30),
-                library.cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
+    library.cv2.putText(
+        frame,
+        texto,
+        (10, 30),
+        library.cv2.FONT_HERSHEY_SIMPLEX,
+        0.8,
+        (0, 255, 0),
+        2
+    )
 
     library.cv2.imshow(janela_nome, frame)
 
