@@ -1,6 +1,6 @@
 import library
-import pickle
-from multiprocessing import Pool, cpu_count
+
+
 
 BASE_DIR = library.os.path.dirname(__file__)
 DB_PATH = library.os.path.join(BASE_DIR, "dataset")
@@ -47,7 +47,7 @@ def build_db_embeddings():
         return [], None
 
     # quantidade de processos
-    NUM_CORES = max(1, cpu_count() - 1)
+    NUM_CORES = max(1, library.cpu_count() - 1)
     print(f"💻 A usar {NUM_CORES} processos\n")
 
     for pessoa in library.os.listdir(DB_PATH):
@@ -71,7 +71,7 @@ def build_db_embeddings():
         print(f"👤 {pessoa} — {len(imagens)} imagens (processando…)")
 
         # multiprocessing
-        with Pool(NUM_CORES) as pool:
+        with library.Pool(NUM_CORES) as pool:
             resultados = pool.map(process_single_image, caminhos)
 
         embeddings = [emb for emb in resultados if emb is not None]
@@ -95,7 +95,7 @@ def build_db_embeddings():
     }
 
     with open(EMB_PATH, "wb") as f:
-        pickle.dump(data, f)
+        library.pickle.dump(data, f)
 
     print("✅ db_embeddings.pkl criado!")
     return db_embeddings, sample_image_path
@@ -108,7 +108,7 @@ def load_db_embeddings():
     if library.os.path.exists(EMB_PATH):
         try:
             with open(EMB_PATH, "rb") as f:
-                data = pickle.load(f)
+                data = library.pickle.load(f)
 
             if "db_embeddings" in data and "sample_image" in data:
                 print(f"🔌 Base carregada de {EMB_PATH}")
