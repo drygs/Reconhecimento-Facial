@@ -1,161 +1,156 @@
 import library
 import pickle
+from multiprocessing import Pool, cpu_count
 
 BASE_DIR = library.os.path.dirname(__file__)
 DB_PATH = library.os.path.join(BASE_DIR, "dataset")
 EMB_PATH = library.os.path.join(BASE_DIR, "db_embeddings.pkl")
 
-MODEL_NAME = "Facenet"  # podes testar "VGG-Face", "ArcFace", etc.
+MODEL_NAME = "ArcFace"   # Podes usar: "SFace" (3x mais rápido), "ArcFace", etc.
+
 
 # -------------------------------------------------
-# Construir base de dados de embeddings (1ª vez)
+# Função que processa 1 imagem num processo separado
+# -------------------------------------------------
+def process_single_image(args):
+    caminho_img, model = args
+    try:
+        img = library.cv2.imread(caminho_img)
+        if img is None:
+            return None
+
+        reps = library.DeepFace.represent(
+            img_path=img,
+            model_name=model,
+            enforce_detection=False
+        )
+
+        if not reps:
+            return None
+
+        return library.np.array(reps[0]["embedding"], dtype="float32")
+    except:
+        return None
+
+
+# -------------------------------------------------
+# Criar o ficheiro db_embeddings.pkl usando multiprocessing
 # -------------------------------------------------
 def build_db_embeddings():
-    print("🔧 A construir base de dados de embeddings (pode demorar na primeira vez)...")
+    print("🔧 A gerar db_embeddings.pkl (primeira vez demora um pouco)…")
 
     db_embeddings = []
-    primeira_imagem_path = None  # vamos usar depois para o threshold
+    sample_image_path = None
 
     if not library.os.path.exists(DB_PATH):
-        print(f"⚠️ Pasta dataset não existe: {DB_PATH}")
+        print("⚠️ dataset/ não existe")
         return [], None
 
+    # quantidade de processos
+    NUM_CORES = max(1, cpu_count() - 1)
+    print(f"💻 A usar {NUM_CORES} processos\n")
+
     for pessoa in library.os.listdir(DB_PATH):
-        pasta_pessoa = library.os.path.join(DB_PATH, pessoa)
-        if not library.os.path.isdir(pasta_pessoa):
+        pasta = library.os.path.join(DB_PATH, pessoa)
+        if not library.os.path.isdir(pasta):
             continue
 
         imagens = [
-            f for f in library.os.listdir(pasta_pessoa)
+            f for f in library.os.listdir(pasta)
             if f.lower().endswith((".jpg", ".jpeg", ".png"))
         ]
 
         if not imagens:
             continue
 
-        # guardar a primeira imagem que encontrarmos para calcular o threshold
-        if primeira_imagem_path is None:
-            primeira_imagem_path = library.os.path.join(pasta_pessoa, imagens[0])
+        if sample_image_path is None:
+            sample_image_path = library.os.path.join(pasta, imagens[0])
 
-        embeddings_pessoa = []
+        caminhos = [(library.os.path.join(pasta, img), MODEL_NAME) for img in imagens]
 
-        total = len(imagens)
-        print(f"\n👤 Pessoa: {pessoa} ({total} imagens)")
+        print(f"👤 {pessoa} — {len(imagens)} imagens (processando…)")
 
-        for i, nome_img in enumerate(imagens, start=1):
-            caminho_img = library.os.path.join(pasta_pessoa, nome_img)
-            print(f"  [{i}/{total}] {caminho_img}")
+        # multiprocessing
+        with Pool(NUM_CORES) as pool:
+            resultados = pool.map(process_single_image, caminhos)
 
-            img = library.cv2.imread(caminho_img)
-            if img is None:
-                print(f"    ⚠️ Não consegui ler a imagem: {caminho_img}")
-                continue
+        embeddings = [emb for emb in resultados if emb is not None]
 
-            try:
-                reps = library.DeepFace.represent(
-                    img_path=img,              # usamos o array da imagem
-                    model_name=MODEL_NAME,
-                    enforce_detection=False    # já vem recortada, pode estar de lado
-                )
-            except Exception as e:
-                print(f"    ⚠️ Erro a obter embedding: {e}")
-                continue
+        print(f"   ✔️ {len(embeddings)}/{len(imagens)} usadas\n")
 
-            if not reps or len(reps) == 0:
-                print(f"    ⚠️ Não foi possível obter embedding.")
-                continue
-
-            emb = library.np.array(reps[0]["embedding"], dtype="float32")
-            embeddings_pessoa.append(emb)
-
-        if not embeddings_pessoa:
-            print("  ⚠️ Nenhuma embedding válida para esta pessoa, a saltar.")
+        if not embeddings:
             continue
 
-        # média das embeddings dessa pessoa → usa TODAS as fotos (frente + lado)
-        mean_emb = library.np.mean(embeddings_pessoa, axis=0)
+        mean_emb = library.np.mean(embeddings, axis=0)
 
         db_embeddings.append({
             "pessoa": pessoa,
             "embedding": mean_emb,
         })
 
-    if not db_embeddings:
-        print("⚠️ Não foram encontradas imagens válidas em dataset/<pessoa>/")
-        return [], None
+    # guardar pkl
+    data = {
+        "db_embeddings": db_embeddings,
+        "sample_image": sample_image_path
+    }
 
-    # guardar em ficheiro para arrancar rápido da próxima vez
-    try:
-        with open(EMB_PATH, "wb") as f:
-            pickle.dump({
-                "db_embeddings": db_embeddings,
-                "sample_image": primeira_imagem_path
-            }, f)
-        print(f"\n✅ Base de dados guardada em: {EMB_PATH}")
-    except Exception as e:
-        print(f"\n⚠️ Erro a guardar base de dados: {e}")
+    with open(EMB_PATH, "wb") as f:
+        pickle.dump(data, f)
 
-    return db_embeddings, primeira_imagem_path
+    print("✅ db_embeddings.pkl criado!")
+    return db_embeddings, sample_image_path
+
 
 # -------------------------------------------------
-# Carregar base de dados (ou construir se não existir)
+# Carregar o .pkl ou criar se não existir
 # -------------------------------------------------
 def load_db_embeddings():
     if library.os.path.exists(EMB_PATH):
         try:
             with open(EMB_PATH, "rb") as f:
                 data = pickle.load(f)
-            db = data.get("db_embeddings", [])
-            sample_image = data.get("sample_image", None)
 
-            if db and sample_image and library.os.path.exists(sample_image):
-                print(f"✅ Base de dados carregada de {EMB_PATH}")
-                return db, sample_image
-            else:
-                print("⚠️ Ficheiro de embeddings incompleto, vou reconstruir...")
-        except Exception as e:
-            print(f"⚠️ Erro a carregar {EMB_PATH}: {e}. Vou reconstruir...")
+            if "db_embeddings" in data and "sample_image" in data:
+                print(f"🔌 Base carregada de {EMB_PATH}")
+                return data["db_embeddings"], data["sample_image"]
+        except:
+            print("⚠️ Erro ao carregar PKL, a reconstruir…")
 
-    # Se chegou aqui, é porque não havia ficheiro ou deu erro → reconstruir
     return build_db_embeddings()
 
+
 # -------------------------------------------------
-# Carregar base de dados de rostos
+# Carregar base de dados
 # -------------------------------------------------
-print("A carregar base de dados de rostos...")
+print("A carregar base de dados…")
 db_embeddings, sample_image_path = load_db_embeddings()
 
 if not db_embeddings:
-    print("⚠️ Base de dados de rostos vazia. A sair.")
+    print("⚠️ Erro: base de dados vazia.")
     exit()
 
-print("Pessoas encontradas na base de dados:")
+print("\nPessoas na base de dados:")
 for item in db_embeddings:
     print(" -", item["pessoa"])
 
-# -------------------------------------------------
-# Limiar (threshold) do modelo
-# -------------------------------------------------
-print("A carregar modelo de reconhecimento (só a 1ª vez demora um pouco)...")
 
-if sample_image_path is None or not library.os.path.exists(sample_image_path):
-    print("⚠️ Não há imagem sample para calcular threshold.")
-    exit()
-
-img_primeira = library.cv2.imread(sample_image_path)
+# -------------------------------------------------
+# Limiar do modelo
+# -------------------------------------------------
+img_sample = library.cv2.imread(sample_image_path)
 
 ref = library.DeepFace.verify(
-    img1_path=img_primeira,
-    img2_path=img_primeira,
+    img1_path=img_sample,
+    img2_path=img_sample,
     model_name=MODEL_NAME,
     enforce_detection=False
 )
 
 base_threshold = float(ref["threshold"])
-# Para caras de lado, deixamos o limiar mais folgado
-LIMIAR = base_threshold * 1.3
+LIMIAR = base_threshold * 1.0
 
-print(f"Modelo pronto! Threshold base: {base_threshold:.4f} | Limiar usado: {LIMIAR:.4f}")
+print(f"\nModelo pronto ✔️  Limiar: {LIMIAR:.4f}\n")
+
 
 # -------------------------------------------------
 # Webcam
@@ -165,13 +160,13 @@ if not cap.isOpened():
     print("Erro a abrir webcam")
     exit()
 
-print(">>> Webcam ligada. Aproxima a cara (também pode ser de lado). ESC para sair.")
+print(">>> Webcam ligada — aproxima a cara (frente ou de lado). ESC para sair.")
 
-FRAME_SKIP = 10  # processa 1 em cada 3 frames
+FRAME_SKIP = 6
 frame_index = 0
 
-# último resultado detetado (para desenhar também nos frames em que não processa)
-ultimas_faces = []  # lista de dicts: { "nome": ..., "dist": ..., "box": (x,y,w,h) }
+ultimas_faces = []
+
 
 while True:
     ret, frame = cap.read()
@@ -180,122 +175,79 @@ while True:
 
     frame_index += 1
 
-    # Reduz um pouco a imagem para acelerar DeepFace
-    frame_pequeno = library.cv2.resize(frame, (0, 0), fx=0.6, fy=0.6)
+    frame_small = library.cv2.resize(frame, (0, 0), fx=0.6, fy=0.6)
 
     h_full, w_full = frame.shape[:2]
-    h_small, w_small = frame_pequeno.shape[:2]
-    sx = w_full / float(w_small)
-    sy = h_full / float(h_small)
+    h_small, w_small = frame_small.shape[:2]
+    sx = w_full / w_small
+    sy = h_full / h_small
 
-    # Só processa em alguns frames para ficar mais fluido
-    processar_este = (frame_index % FRAME_SKIP == 0)
-
-    if processar_este:
+    if frame_index % FRAME_SKIP == 0:
         faces_detectadas = []
 
         try:
-            reps_frame = library.DeepFace.represent(
-                img_path=frame_pequeno,
+            reps = library.DeepFace.represent(
+                img_path=frame_small,
                 model_name=MODEL_NAME,
-                enforce_detection=False   # deixa passar mesmo se estiver meio de lado
+                enforce_detection=False
             )
 
-            if reps_frame is None:
-                reps_frame = []
+            if isinstance(reps, dict):
+                reps = [reps]
+            if reps is None:
+                reps = []
 
-            # algumas versões devolvem dict, outras lista
-            if isinstance(reps_frame, dict):
-                reps_lista = [reps_frame]
-            else:
-                reps_lista = reps_frame
-
-            for rep in reps_lista:
+            for rep in reps:
                 if "embedding" not in rep:
                     continue
 
                 emb_frame = library.np.array(rep["embedding"], dtype="float32")
 
-                # tentar apanhar a área da cara
-                facial_area = rep.get("facial_area") or rep.get("region")
-                if facial_area and isinstance(facial_area, dict):
-                    x = facial_area.get("x", 0)
-                    y = facial_area.get("y", 0)
-                    w = facial_area.get("w", 0)
-                    h = facial_area.get("h", 0)
-                else:
-                    # se não houver coords, não conseguimos desenhar caixa
-                    x = y = w = h = 0
+                region = rep.get("region") or rep.get("facial_area") or {}
+                x = int(region.get("x", 0) * sx)
+                y = int(region.get("y", 0) * sy)
+                w = int(region.get("w", 0) * sx)
+                h = int(region.get("h", 0) * sy)
 
-                melhor_dist = None
+                melhor_dist = 10
                 melhor_nome = "Desconhecido"
 
-                # compara com todas as embeddings da BD (cosine distance)
                 for item in db_embeddings:
                     emb_db = item["embedding"]
-
                     dot = float(library.np.dot(emb_frame, emb_db))
-                    norm_prod = float(
-                        library.np.linalg.norm(emb_frame) * library.np.linalg.norm(emb_db)
-                    ) + 1e-8
-                    cos_sim = dot / norm_prod
-                    dist = 1.0 - cos_sim
+                    norm = float(library.np.linalg.norm(emb_frame) *
+                                 library.np.linalg.norm(emb_db)) + 1e-8
+                    dist = 1 - (dot / norm)
 
-                    if melhor_dist is None or dist < melhor_dist:
+                    if dist < melhor_dist:
                         melhor_dist = dist
                         melhor_nome = item["pessoa"]
 
-                if melhor_dist is not None and melhor_dist < LIMIAR:
+                if melhor_dist < LIMIAR:
                     label = f"{melhor_nome} ({melhor_dist:.3f})"
                 else:
                     label = "Desconhecido"
 
-                # guardar para depois desenhar
                 faces_detectadas.append({
                     "nome": label,
-                    "dist": melhor_dist,
-                    "box_small": (x, y, w, h),
+                    "box": (x, y, w, h)
                 })
 
-        except Exception as e:
-            # se der erro, não atualiza deteções neste frame
-            # print("[ERRO represent]:", e)
+        except:
             faces_detectadas = []
 
-        # converter coordenadas do frame pequeno para o frame original
-        ultimas_faces = []
-        for f in faces_detectadas:
-            x_s, y_s, w_s, h_s = f["box_small"]
-            # escala para o tamanho original
-            x_f = int(x_s * sx)
-            y_f = int(y_s * sy)
-            w_f = int(w_s * sx)
-            h_f = int(h_s * sy)
+        ultimas_faces = faces_detectadas
 
-            ultimas_faces.append({
-                "nome": f["nome"],
-                "dist": f["dist"],
-                "box": (x_f, y_f, w_f, h_f),
-            })
-
-    # desenhar sempre as últimas caras detetadas (mesmo em frames não processados)
     for f in ultimas_faces:
         x, y, w, h = f["box"]
-        if w > 0 and h > 0:
-            library.cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
-            library.cv2.putText(
-                frame,
-                f["nome"],
-                (x, max(0, y - 10)),
-                library.cv2.FONT_HERSHEY_SIMPLEX,
-                0.8,
-                (0, 255, 0),
-                2
-            )
+        library.cv2.rectangle(frame, (x, y), (x+w, y+h), (0, 255, 0), 2)
+        library.cv2.putText(frame, f["nome"], (x, y - 10),
+                            library.cv2.FONT_HERSHEY_SIMPLEX, 0.7,
+                            (0, 255, 0), 2)
 
     library.cv2.imshow("Reconhecimento Facial", frame)
 
-    if library.cv2.waitKey(1) & 0xFF == 27:  # ESC
+    if library.cv2.waitKey(1) & 0xFF == 27:
         break
 
 cap.release()

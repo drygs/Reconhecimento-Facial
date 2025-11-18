@@ -44,7 +44,7 @@ library.time.sleep(1); print("2...")
 library.time.sleep(1); print("1...")
 print("A capturar 100 fotos automaticamente!\n")
 
-total_fotos = 100
+total_fotos = 250
 intervalo = 10 / total_fotos  # 100 fotos em 10 segundos
 contador = 1
 ultimo_tiro = library.time.time()
