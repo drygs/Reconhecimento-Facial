@@ -4,12 +4,11 @@ BASE_DIR = library.os.path.dirname(__file__)
 DB_PATH = library.os.path.join(BASE_DIR, "dataset")
 EMB_PATH = library.os.path.join(BASE_DIR, "db_embeddings.pkl")
 
-MODEL_NAME = "ArcFace"   # Podes usar: "SFace" (3x mais rápido), "ArcFace", etc.
+MODEL_NAME = "ArcFace"
 
 
-# -------------------------------------------------
+
 # Função que processa 1 imagem num processo separado
-# -------------------------------------------------
 def process_single_image(args):
     caminho_img, model = args
     try:
@@ -31,9 +30,9 @@ def process_single_image(args):
         return None
 
 
-# -------------------------------------------------
+
 # Criar o ficheiro db_embeddings.pkl usando multiprocessing
-# -------------------------------------------------
+
 def build_db_embeddings():
     print("🔧 A gerar db_embeddings.pkl (primeira vez demora um pouco)…")
 
@@ -42,58 +41,58 @@ def build_db_embeddings():
 
     if not library.os.path.exists(DB_PATH):
         print("⚠️ dataset/ não existe")
-        return [], None
+        return [], None                                         #devolve vazio
 
     # quantidade de processos
-    NUM_CORES = max(1, library.cpu_count() - 1)
+    NUM_CORES = max(1, library.cpu_count() - 1)                 #garante o uso de um core e deixa pelo menos um core livre pro pc
     print(f"💻 A usar {NUM_CORES} processos\n")
 
-    for pessoa in library.os.listdir(DB_PATH):
-        pasta = library.os.path.join(DB_PATH, pessoa)
+    for pessoa in library.os.listdir(DB_PATH):                  #lista as imagens
+        pasta = library.os.path.join(DB_PATH, pessoa)           #guarda a lista
         if not library.os.path.isdir(pasta):
             continue
 
         imagens = [
-            f for f in library.os.listdir(pasta)
-            if f.lower().endswith((".jpg", ".jpeg", ".png"))
+            f for f in library.os.listdir(pasta)                #para cada f, se a condição for verdadeira, guarda o f.
+            if f.lower().endswith((".jpg", ".jpeg", ".png"))    #coloca o nome em minuscula e verifica se é do tipo especificado
         ]
 
         if not imagens:
             continue
 
         if sample_image_path is None:
-            sample_image_path = library.os.path.join(pasta, imagens[0])
+            sample_image_path = library.os.path.join(pasta, imagens[0])                 #guarda o caminho da primeira imagem
 
-        caminhos = [(library.os.path.join(pasta, img), MODEL_NAME) for img in imagens]
+        caminhos = [(library.os.path.join(pasta, img), MODEL_NAME) for img in imagens]  #guarda caminho pra ler de imagem em imagem
 
         print(f"👤 {pessoa} — {len(imagens)} imagens (processando…)")
 
         # multiprocessing
         with library.Pool(NUM_CORES) as pool:
-            resultados = pool.map(process_single_image, caminhos)
+            resultados = pool.map(process_single_image, caminhos)      #lista de todos os embedding
 
-        embeddings = [emb for emb in resultados if emb is not None]
+        embeddings = [emb for emb in resultados if emb is not None]    #guarda os embedings emb antes do for é oque vai ser colocado na lista(forma compacta)
 
         print(f"   ✔️ {len(embeddings)}/{len(imagens)} usadas\n")
 
         if not embeddings:
             continue
 
-        mean_emb = library.np.mean(embeddings, axis=0)
+        mean_emb = library.np.mean(embeddings, axis=0)              #transforma caracteristicas em numeros
 
         db_embeddings.append({
             "pessoa": pessoa,
-            "embedding": mean_emb,
+            "embedding": mean_emb,                                  #atribui para a pessoa o valor do emb
         })
 
     # guardar pkl
     data = {
-        "db_embeddings": db_embeddings,
-        "sample_image": sample_image_path
+        "db_embeddings": db_embeddings,                             #guarda os embedings das pessoas
+        "sample_image": sample_image_path                           #diz onde guardar (caminho da primeira imagem)
     }
 
     with open(EMB_PATH, "wb") as f:
-        library.pickle.dump(data, f)
+        library.pickle.dump(data, f)                                #transforma em bytes o objeto data para guardar no ficheiro pkl
 
     print("✅ db_embeddings.pkl criado!")
     return db_embeddings, sample_image_path
@@ -101,7 +100,7 @@ def build_db_embeddings():
 
 # -------------------------------------------------
 # Carregar o .pkl ou criar se não existir
-# -------------------------------------------------
+
 def load_db_embeddings():
     if library.os.path.exists(EMB_PATH):
         try:
@@ -119,7 +118,7 @@ def load_db_embeddings():
 
 # -------------------------------------------------
 # Função principal: reconhecimento pela webcam
-# -------------------------------------------------
+
 def start_reconhecimento():
     print("A carregar base de dados…")
     db_embeddings, sample_image_path = load_db_embeddings()
