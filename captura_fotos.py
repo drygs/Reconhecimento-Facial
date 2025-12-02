@@ -6,7 +6,7 @@ import library
 cascade_path_frontal = library.cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
 face_cascade_frontal = library.cv2.CascadeClassifier(cascade_path_frontal)
 
-# Perfil (lado) – só deteta um dos lados, vamos usar flip para o outro
+# Perfil (lado) 
 cascade_path_profile = library.cv2.data.haarcascades + "haarcascade_profileface.xml"
 face_cascade_profile = library.cv2.CascadeClassifier(cascade_path_profile)
 
@@ -30,7 +30,7 @@ def capturar_fotos():
         print("Erro a abrir webcam")
         return
 
-    # Resolução mais leve (podes pôr 1280x720 se quiseres)
+    # Resolução mais leve
     cap.set(library.cv2.CAP_PROP_FRAME_WIDTH, 640)
     cap.set(library.cv2.CAP_PROP_FRAME_HEIGHT, 480)
 
@@ -101,7 +101,7 @@ def capturar_fotos():
 
         rosto_valido = None
 
-        # -------------- FILTROS SIMPLES (para evitar lixo) --------------
+        # -------------- FILTROS SIMPLES  --------------
 
         for (x, y, w, h) in faces_todas:
             # Filtro de tamanho mínimo (evitar caras muito pequenas ao fundo)
